@@ -82,12 +82,12 @@ func GetUnstagedChanges() (string, error) {
 func main() {
 	changes, err := GetUnstagedChanges()
 	if err != nil {
-		fmt.Errorf("获取未暂存变更失败: %v", err)
+		fmt.Printf("获取未暂存变更失败: %v\n", err)
 		return
 	}
 
 	if changes == "" {
-		fmt.Printf("当前没有未暂存的变更，无需进行代码审查")
+		fmt.Printf("当前没有未暂存的变更，无需进行代码审查\n")
 		return
 	}
 	
