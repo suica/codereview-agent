@@ -29,7 +29,6 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/flow/agent/react"
@@ -83,10 +82,12 @@ func GetUnstagedChanges() (string, error) {
 func main() {
 	changes, err := GetUnstagedChanges()
 	if err != nil {
+		fmt.Errorf("获取未暂存变更失败: %v", err)
 		return
 	}
 
 	if changes == "" {
+		fmt.Printf("当前没有未暂存的变更，无需进行代码审查")
 		return
 	}
 	
@@ -96,12 +97,6 @@ func main() {
 	temperature := float32(0.7)
 
 	ctx := context.Background()
-
-	// 创建 DuckDuckGo 工具
-	searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
-	if err != nil {
-		return
-	}
 
 	// 创建并配置 ChatModel
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
@@ -117,7 +112,6 @@ func main() {
 	// 初始化 tools 配置
 	toolsConfig := compose.ToolsNodeConfig{
 		Tools: []tool.BaseTool{
-			searchTool,
 		},
 	}
 
@@ -126,26 +120,24 @@ func main() {
 		ToolCallingModel: chatModel,
 		ToolsConfig:      toolsConfig,
 		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
-		StreamToolCallChecker: func(ctx context.Context, sr *schema.StreamReader[*schema.Message]) (bool, error) {
-			defer sr.Close()
-			for {
-				msg, err := sr.Recv()
-				if err != nil {
-					if errors.Is(err, io.EOF) {
-						// finish
-						break
-					}
-
-					return false, err
-				}
-
-				if len(msg.ToolCalls) > 0 {
-					return true, nil
-				}
-			}
-
-			return false, nil
-		},
+		// 如果开启 toolcall，可能需要重新实现启用这个注释
+		// StreamToolCallChecker: func(ctx context.Context, sr *schema.StreamReader[*schema.Message]) (bool, error) {
+		// 	defer sr.Close()
+		// 	for {
+		// 		msg, err := sr.Recv()
+		// 		if err != nil {
+		// 			if errors.Is(err, io.EOF) {
+		// 				// finish
+		// 				break
+		// 			}
+		// 			return false, err
+		// 		}
+		// 		if len(msg.ToolCalls) > 0 {
+		// 			return true, nil
+		// 		}
+		// 	}
+		// 	return false, nil
+		// },
 	})
 
 	if err != nil {
@@ -153,6 +145,8 @@ func main() {
 	}
 
 	// 不再使用glamour渲染器，直接输出原始内容
+
+	fmt.Println("开始代码审查...\n")
 	
 	// 使用Stream方法进行流式输出
 	msgReader, err := agent.Stream(ctx, []*schema.Message{
@@ -165,30 +159,24 @@ func main() {
 			Content: "代码变更：\n```diff\n" + changes + "\n```",
 		},
 	})
-	
+
 	if err != nil {
 		return
 	}
-	
-	fmt.Print("\n[流式渲染输出开始]\n")
 	
 	for {
 		// msg type is *schema.Message
 		msg, err := msgReader.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// 流结束
-				fmt.Print("\n\n[流式渲染输出结束]\n")
+				// finish
 				break
 			}
 			// error
+			fmt.Printf("failed to recv: %v\n", err)
 			return
 		}
-		
-		// 直接输出未渲染的原始内容
-		if msg.Content != "" {
-			fmt.Print(msg.Content)
-			os.Stdout.Sync()
-		}
+
+		fmt.Print(msg.Content)
 	}
 }
