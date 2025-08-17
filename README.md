@@ -18,6 +18,8 @@ Code Review Agent 是一个自动化代码审查工具，它能够：
 - 🚀 **实时流式输出**：支持实时查看审查进度和结果
 - 🔧 **易于集成**：可轻松集成到现有的开发工作流中
 
+![Static Showcase](examples/todolist/static_showcase.png)
+
 ## 🎯 检测范围
 
 - 函数签名变更
