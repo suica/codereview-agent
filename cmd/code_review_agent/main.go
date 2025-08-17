@@ -18,10 +18,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
@@ -31,67 +34,120 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// 辅助函数，类似于 gptr.Of
-func ptrOf[T any](v T) *T {
-	return &v
+// GetUnstagedChanges 获取当前Git仓库中所有没有提交进暂存区的改动
+// 返回git diff的完整输出，包含具体的改动内容
+func GetUnstagedChanges() (string, error) {
+	// 执行 git diff 命令获取工作目录与暂存区的差异
+	cmd := exec.Command("git", "diff")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("执行git diff失败: %v", err)
+	}
+
+	// 如果没有改动，检查是否有未跟踪的文件
+	if len(output) == 0 {
+		// 检查未跟踪的文件
+		statusCmd := exec.Command("git", "status", "--porcelain")
+		statusOutput, err := statusCmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("执行git status失败: %v", err)
+		}
+		
+		if len(statusOutput) == 0 {
+			return "没有未暂存的改动", nil
+		}
+		
+		// 解析未跟踪的文件
+		var untrackedFiles []string
+		scanner := bufio.NewScanner(strings.NewReader(string(statusOutput)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if len(line) >= 2 && line[0:2] == "??" {
+				filePath := strings.TrimSpace(line[2:])
+				untrackedFiles = append(untrackedFiles, filePath)
+			}
+		}
+		
+		if len(untrackedFiles) > 0 {
+			return fmt.Sprintf("未跟踪的文件:\n%s", strings.Join(untrackedFiles, "\n")), nil
+		}
+		
+		return "没有未暂存的改动", nil
+	}
+
+	return string(output), nil
 }
 
 func main() {
-	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-	openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
-	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
-	temperature := float32(0.7)
-
-	ctx := context.Background()
-
-	// 创建 DuckDuckGo 工具
-	searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
+	changes, err := GetUnstagedChanges()
 	if err != nil {
-		log.Printf("NewTextSearchTool failed, err=%v", err)
-		return
+		log.Printf("获取未暂存改动失败: %v", err)
+	} else {
+		fmt.Println("开始代码审查")
+		fmt.Println(changes)
 	}
+	
+	if true {
+		openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+		openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
+		openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+		temperature := float32(0.7)
 
-	// 创建并配置 ChatModel
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		BaseURL:     openAIBaseURL,
-		Model:       openAIModelName,
-		APIKey:      openAIAPIKey,
-		Temperature: &temperature,
-	})
-	if err != nil {
-		log.Printf("NewChatModel failed, err=%v", err)
-		return
+		ctx := context.Background()
+
+		// 创建 DuckDuckGo 工具
+		searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
+		if err != nil {
+			log.Printf("NewTextSearchTool failed, err=%v", err)
+			return
+		}
+
+		// 创建并配置 ChatModel
+		chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+			BaseURL:     openAIBaseURL,
+			Model:       openAIModelName,
+			APIKey:      openAIAPIKey,
+			Temperature: &temperature,
+		})
+		if err != nil {
+			log.Printf("NewChatModel failed, err=%v", err)
+			return
+		}
+
+		// 初始化 tools 配置
+		toolsConfig := compose.ToolsNodeConfig{
+			Tools: []tool.BaseTool{
+				searchTool,
+			},
+		}
+
+		// 创建 ReAct Agent
+		agent, err := react.NewAgent(ctx, &react.AgentConfig{
+			ToolCallingModel: chatModel,
+			ToolsConfig:      toolsConfig,
+			MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
+		})
+
+		if err != nil {
+			log.Printf("react.NewAgent failed, err=%v", err)
+			return
+		}
+
+		log.Println("=== 代码审查开始 ===")
+		// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
+		resp, err := agent.Generate(ctx, []*schema.Message{
+			{
+				Role:    schema.System,
+				Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
+			},
+			{
+				Role:    schema.User,
+				Content: "代码变更：\n```diff\n" + changes + "\n```",
+			},
+		})
+		if err != nil {
+			log.Fatalf("生成响应失败: %v", err)
+		}
+		fmt.Println(resp.Content)
 	}
-
-	// 初始化 tools 配置
-	toolsConfig := compose.ToolsNodeConfig{
-		Tools: []tool.BaseTool{
-			searchTool,
-		},
-	}
-
-	// 创建 ReAct Agent
-	agent, err := react.NewAgent(ctx, &react.AgentConfig{
-		ToolCallingModel: chatModel,
-		ToolsConfig:      toolsConfig,
-		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
-	})
-
-	if err != nil {
-		log.Printf("react.NewAgent failed, err=%v", err)
-		return
-	}
-
-	log.Println("=== 代码审查开始 ===")
-	// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
-	resp, err := agent.Generate(ctx, []*schema.Message{
-		{
-			Role:    schema.User,
-			Content: "请搜索cloudwego/eino的仓库地址，然后告诉我仓库的地址",
-		},
-	})
-	if err != nil {
-		log.Fatalf("生成响应失败: %v", err)
-	}
-	fmt.Println(resp.Content)
 }
