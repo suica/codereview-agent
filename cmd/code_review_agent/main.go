@@ -106,21 +106,36 @@ func main() {
 		return
 	}
 
-	// 运行示例
-	resp, err := agent.Invoke(ctx, []*schema.Message{
+	// 运行示例 - 使用流式输出
+	stream, err := agent.Stream(ctx, []*schema.Message{
 		{
 			Role:    schema.User,
-			Content: "请帮我搜索一下 cloudwego/eino 的仓库地址，并提供代码审查的最佳实践",
+			Content: "请帮我搜索一下 cloudwego/eino 的仓库地址。并且告诉我他的地址是什么？",
 		},
 	})
 	if err != nil {
-		log.Printf("agent.Invoke failed, err=%v", err)
+		log.Printf("agent.Stream failed, err=%v", err)
 		return
 	}
 
-	// 输出结果
-	for idx, msg := range resp {
-		log.Printf("\n")
-		log.Printf("message %d: %s: %s", idx, msg.Role, msg.Content)
+	// 流式输出结果
+	log.Printf("开始流式输出:\n")
+	for {
+		chunk, err := stream.Recv()
+		if err != nil {
+			if err.Error() == "EOF" {
+				log.Printf("\n流式输出完成")
+				break
+			}
+			log.Printf("stream.Recv failed, err=%v", err)
+			return
+		}
+		
+		// 实时输出每个消息块
+		for _, msg := range chunk {
+			if msg.Content != "" {
+				log.Printf("%s", msg.Content)
+			}
+		}
 	}
 }
