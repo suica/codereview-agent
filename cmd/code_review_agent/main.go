@@ -91,18 +91,18 @@ func main() {
 		return
 	}
 	
-	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-	openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
-	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+	moonshotAPIKey := os.Getenv("MOONSHOT_API_KEY")
+	moonshotModelName := os.Getenv("MOONSHOT_MODEL_NAME")
+	moonshotBaseURL := os.Getenv("MOONSHOT_BASE_URL")
 	temperature := float32(0.7)
 
 	ctx := context.Background()
 
 	// 创建并配置 ChatModel
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		BaseURL:     openAIBaseURL,
-		Model:       openAIModelName,
-		APIKey:      openAIAPIKey,
+		BaseURL:     moonshotBaseURL,
+		Model:       moonshotModelName,
+		APIKey:      moonshotAPIKey,
 		Temperature: &temperature,
 	})
 	if err != nil {
