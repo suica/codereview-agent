@@ -54,7 +54,7 @@ func GetUnstagedChanges() (string, error) {
 		}
 		
 		if len(statusOutput) == 0 {
-			return "没有未暂存的改动", nil
+			return "", nil
 		}
 		
 		// 解析未跟踪的文件
@@ -72,7 +72,7 @@ func GetUnstagedChanges() (string, error) {
 			return fmt.Sprintf("未跟踪的文件:\n%s", strings.Join(untrackedFiles, "\n")), nil
 		}
 		
-		return "没有未暂存的改动", nil
+		return "", nil
 	}
 
 	return string(output), nil
@@ -82,72 +82,73 @@ func main() {
 	changes, err := GetUnstagedChanges()
 	if err != nil {
 		log.Printf("获取未暂存改动失败: %v", err)
-	} else {
-		fmt.Println("开始代码审查")
-		fmt.Println(changes)
+	}
+
+	if changes == "" {
+		log.Println("没有未暂存的改动，无需进行代码审查")
+		return
 	}
 	
-	if true {
-		openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-		openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
-		openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
-		temperature := float32(0.7)
+	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+	openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
+	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+	temperature := float32(0.7)
 
-		ctx := context.Background()
+	ctx := context.Background()
 
-		// 创建 DuckDuckGo 工具
-		searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
-		if err != nil {
-			log.Printf("NewTextSearchTool failed, err=%v", err)
-			return
-		}
-
-		// 创建并配置 ChatModel
-		chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-			BaseURL:     openAIBaseURL,
-			Model:       openAIModelName,
-			APIKey:      openAIAPIKey,
-			Temperature: &temperature,
-		})
-		if err != nil {
-			log.Printf("NewChatModel failed, err=%v", err)
-			return
-		}
-
-		// 初始化 tools 配置
-		toolsConfig := compose.ToolsNodeConfig{
-			Tools: []tool.BaseTool{
-				searchTool,
-			},
-		}
-
-		// 创建 ReAct Agent
-		agent, err := react.NewAgent(ctx, &react.AgentConfig{
-			ToolCallingModel: chatModel,
-			ToolsConfig:      toolsConfig,
-			MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
-		})
-
-		if err != nil {
-			log.Printf("react.NewAgent failed, err=%v", err)
-			return
-		}
-
-		log.Println("=== 代码审查开始 ===")
-		// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
-		resp, err := agent.Generate(ctx, []*schema.Message{
-			{
-				Role:    schema.System,
-				Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
-			},
-			{
-				Role:    schema.User,
-				Content: "代码变更：\n```diff\n" + changes + "\n```",
-			},
-		})
-		if err != nil {
-			log.Fatalf("生成响应失败: %v", err)
-		}
-		fmt.Println(resp.Content)
+	// 创建 DuckDuckGo 工具
+	searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
+	if err != nil {
+		log.Printf("NewTextSearchTool failed, err=%v", err)
+		return
 	}
+
+	// 创建并配置 ChatModel
+	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		BaseURL:     openAIBaseURL,
+		Model:       openAIModelName,
+		APIKey:      openAIAPIKey,
+		Temperature: &temperature,
+	})
+	if err != nil {
+		log.Printf("NewChatModel failed, err=%v", err)
+		return
+	}
+
+	// 初始化 tools 配置
+	toolsConfig := compose.ToolsNodeConfig{
+		Tools: []tool.BaseTool{
+			searchTool,
+		},
+	}
+
+	// 创建 ReAct Agent
+	agent, err := react.NewAgent(ctx, &react.AgentConfig{
+		ToolCallingModel: chatModel,
+		ToolsConfig:      toolsConfig,
+		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
+	})
+
+	if err != nil {
+		log.Printf("react.NewAgent failed, err=%v", err)
+		return
+	}
+
+	log.Println("=== 代码审查开始 ===")
+	// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
+	resp, err := agent.Generate(ctx, []*schema.Message{
+		{
+			Role:    schema.System,
+			Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
+		},
+		{
+			Role:    schema.User,
+			Content: "代码变更：\n```diff\n" + changes + "\n```",
+		},
+	})
+	if err != nil {
+		log.Fatalf("生成响应失败: %v", err)
+	}
+	fmt.Println(resp.Content)
+	
 }
