@@ -23,12 +23,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+
 	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
@@ -84,11 +83,10 @@ func GetUnstagedChanges() (string, error) {
 func main() {
 	changes, err := GetUnstagedChanges()
 	if err != nil {
-		log.Printf("获取未暂存改动失败: %v", err)
+		return
 	}
 
 	if changes == "" {
-		log.Println("没有未暂存的改动，无需进行代码审查")
 		return
 	}
 	
@@ -102,7 +100,6 @@ func main() {
 	// 创建 DuckDuckGo 工具
 	searchTool, err := duckduckgo.NewTextSearchTool(ctx, &duckduckgo.Config{})
 	if err != nil {
-		log.Printf("NewTextSearchTool failed, err=%v", err)
 		return
 	}
 
@@ -114,7 +111,6 @@ func main() {
 		Temperature: &temperature,
 	})
 	if err != nil {
-		log.Printf("NewChatModel failed, err=%v", err)
 		return
 	}
 
@@ -153,17 +149,16 @@ func main() {
 	})
 
 	if err != nil {
-		log.Printf("react.NewAgent failed, err=%v", err)
 		return
 	}
 
-	log.Println("=== 代码审查开始 ===")
+	// 不再使用glamour渲染器，直接输出原始内容
 	
-	// 使用Generate方法获取完整响应
-	resp, err := agent.Generate(ctx, []*schema.Message{
+	// 使用Stream方法进行流式输出
+	msgReader, err := agent.Stream(ctx, []*schema.Message{
 		{
 			Role:    schema.System,
-			Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
+			Content: CodeReviewSystemPrompt,
 		},
 		{
 			Role:    schema.User,
@@ -172,29 +167,28 @@ func main() {
 	})
 	
 	if err != nil {
-		log.Printf("代码审查失败: %v", err)
 		return
 	}
 	
-	// 使用glamour渲染markdown输出
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(120),
-	)
-	if err != nil {
-		log.Printf("创建glamour渲染器失败: %v", err)
-		// 如果glamour失败，直接输出原始内容
-		fmt.Print(resp.Content)
-		return
-	}
+	fmt.Print("\n[流式渲染输出开始]\n")
 	
-	out, err := r.Render(resp.Content)
-	if err != nil {
-		log.Printf("渲染markdown失败: %v", err)
-		// 如果渲染失败，直接输出原始内容
-		fmt.Print(resp.Content)
-		return
+	for {
+		// msg type is *schema.Message
+		msg, err := msgReader.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// 流结束
+				fmt.Print("\n\n[流式渲染输出结束]\n")
+				break
+			}
+			// error
+			return
+		}
+		
+		// 直接输出未渲染的原始内容
+		if msg.Content != "" {
+			fmt.Print(msg.Content)
+			os.Stdout.Sync()
+		}
 	}
-	
-	fmt.Print(out)
 }
