@@ -20,7 +20,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -127,6 +129,26 @@ func main() {
 		ToolCallingModel: chatModel,
 		ToolsConfig:      toolsConfig,
 		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
+		StreamToolCallChecker: func(ctx context.Context, sr *schema.StreamReader[*schema.Message]) (bool, error) {
+			defer sr.Close()
+			for {
+				msg, err := sr.Recv()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						// finish
+						break
+					}
+
+					return false, err
+				}
+
+				if len(msg.ToolCalls) > 0 {
+					return true, nil
+				}
+			}
+
+			return false, nil
+		},
 	})
 
 	if err != nil {
@@ -135,8 +157,9 @@ func main() {
 	}
 
 	log.Println("=== 代码审查开始 ===")
+	var msgReader *schema.StreamReader[*schema.Message]
 	// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
-	resp, err := agent.Generate(ctx, []*schema.Message{
+	msgReader, err = agent.Stream(ctx, []*schema.Message{
 		{
 			Role:    schema.System,
 			Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
@@ -146,9 +169,19 @@ func main() {
 			Content: "代码变更：\n```diff\n" + changes + "\n```",
 		},
 	})
-	if err != nil {
-		log.Fatalf("生成响应失败: %v", err)
+
+	for {
+		// msg type is *schema.Message
+		msg, err := msgReader.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// finish
+				break
+			}
+			// error
+			log.Printf("failed to recv: %v\n", err)
+			return
+		}
+		fmt.Print(msg.Content)
 	}
-	fmt.Println(resp.Content)
-	
 }
