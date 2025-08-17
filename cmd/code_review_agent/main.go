@@ -126,24 +126,6 @@ func main() {
 		ToolCallingModel: chatModel,
 		ToolsConfig:      toolsConfig,
 		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
-		// 如果开启 toolcall，可能需要重新实现启用这个注释
-		// StreamToolCallChecker: func(ctx context.Context, sr *schema.StreamReader[*schema.Message]) (bool, error) {
-		// 	defer sr.Close()
-		// 	for {
-		// 		msg, err := sr.Recv()
-		// 		if err != nil {
-		// 			if errors.Is(err, io.EOF) {
-		// 				// finish
-		// 				break
-		// 			}
-		// 			return false, err
-		// 		}
-		// 		if len(msg.ToolCalls) > 0 {
-		// 			return true, nil
-		// 		}
-		// 	}
-		// 	return false, nil
-		// },
 	})
 
 	if err != nil {
