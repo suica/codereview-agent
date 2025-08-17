@@ -93,7 +93,13 @@ func main() {
 	
 	moonshotAPIKey := os.Getenv("MOONSHOT_API_KEY")
 	moonshotModelName := os.Getenv("MOONSHOT_MODEL_NAME")
+	if moonshotModelName == "" {
+		moonshotModelName = "kimi-k2-0711-preview"
+	}
 	moonshotBaseURL := os.Getenv("MOONSHOT_BASE_URL")
+	if moonshotBaseURL == "" {
+		moonshotBaseURL = "https://api.moonshot.cn/v1"
+	}
 	temperature := float32(0.7)
 
 	ctx := context.Background()
