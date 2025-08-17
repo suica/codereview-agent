@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
@@ -157,9 +158,9 @@ func main() {
 	}
 
 	log.Println("=== 代码审查开始 ===")
-	var msgReader *schema.StreamReader[*schema.Message]
-	// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
-	msgReader, err = agent.Stream(ctx, []*schema.Message{
+	
+	// 使用Generate方法获取完整响应
+	resp, err := agent.Generate(ctx, []*schema.Message{
 		{
 			Role:    schema.System,
 			Content: "你是一个代码评审专家。你生来只有一个任务：对于一份代码变更，找到它潜在的breaking change，并给出markdown格式的修复意见。",
@@ -169,19 +170,31 @@ func main() {
 			Content: "代码变更：\n```diff\n" + changes + "\n```",
 		},
 	})
-
-	for {
-		// msg type is *schema.Message
-		msg, err := msgReader.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				// finish
-				break
-			}
-			// error
-			log.Printf("failed to recv: %v\n", err)
-			return
-		}
-		fmt.Print(msg.Content)
+	
+	if err != nil {
+		log.Printf("代码审查失败: %v", err)
+		return
 	}
+	
+	// 使用glamour渲染markdown输出
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(120),
+	)
+	if err != nil {
+		log.Printf("创建glamour渲染器失败: %v", err)
+		// 如果glamour失败，直接输出原始内容
+		fmt.Print(resp.Content)
+		return
+	}
+	
+	out, err := r.Render(resp.Content)
+	if err != nil {
+		log.Printf("渲染markdown失败: %v", err)
+		// 如果渲染失败，直接输出原始内容
+		fmt.Print(resp.Content)
+		return
+	}
+	
+	fmt.Print(out)
 }
