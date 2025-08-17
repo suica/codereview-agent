@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -38,6 +40,7 @@ func main() {
 	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
 	openAIModelName := os.Getenv("OPENAI_MODEL_NAME")
 	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+	temperature := float32(0.7)
 
 	ctx := context.Background()
 
@@ -48,94 +51,47 @@ func main() {
 		return
 	}
 
-	// 初始化 tools
-	tools := []tool.BaseTool{
-		searchTool,
-	}
-
 	// 创建并配置 ChatModel
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		BaseURL:     openAIBaseURL,
 		Model:       openAIModelName,
 		APIKey:      openAIAPIKey,
-		Temperature: ptrOf(float32(0.7)),
+		Temperature: &temperature,
 	})
 	if err != nil {
 		log.Printf("NewChatModel failed, err=%v", err)
 		return
 	}
 
-	// 获取工具信息, 用于绑定到 ChatModel
-	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
-	var info *schema.ToolInfo
-	for _, tool := range tools {
-		info, err = tool.Info(ctx)
-		if err != nil {
-			log.Printf("get ToolInfo failed, err=%v", err)
-			return
-		}
-		toolInfos = append(toolInfos, info)
+	// 初始化 tools 配置
+	toolsConfig := compose.ToolsNodeConfig{
+		Tools: []tool.BaseTool{
+			searchTool,
+		},
 	}
 
-	// 将 tools 绑定到 ChatModel
-	err = chatModel.BindTools(toolInfos)
-	if err != nil {
-		log.Printf("BindTools failed, err=%v", err)
-		return
-	}
-
-	// 创建 tools 节点
-	toolsNode, err := compose.NewToolNode(ctx, &compose.ToolsNodeConfig{
-		Tools: tools,
+	// 创建 ReAct Agent
+	agent, err := react.NewAgent(ctx, &react.AgentConfig{
+		ToolCallingModel: chatModel,
+		ToolsConfig:      toolsConfig,
+		MaxStep:          20, // 设置最大推理步数，允许10轮对话（10次ChatModel + 10次Tools）
 	})
+
 	if err != nil {
-		log.Printf("NewToolNode failed, err=%v", err)
+		log.Printf("react.NewAgent failed, err=%v", err)
 		return
 	}
 
-	// 构建完整的处理链
-	chain := compose.NewChain[[]*schema.Message, []*schema.Message]()
-	chain.
-		AppendChatModel(chatModel, compose.WithNodeName("chat_model")).
-		AppendToolsNode(toolsNode, compose.WithNodeName("tools"))
-
-	// 编译并运行 chain
-	agent, err := chain.Compile(ctx)
-	if err != nil {
-		log.Printf("chain.Compile failed, err=%v", err)
-		return
-	}
-
-	// 运行示例 - 使用流式输出
-	stream, err := agent.Stream(ctx, []*schema.Message{
+	log.Println("=== 代码审查开始 ===")
+	// HACK: 使用Generate方法获取完整响应，因为Stream会因为模型供应商对于ToolCall的支持而提前终止
+	resp, err := agent.Generate(ctx, []*schema.Message{
 		{
 			Role:    schema.User,
-			Content: "请帮我搜索一下 cloudwego/eino 的仓库地址。并且告诉我他的地址是什么？",
+			Content: "请搜索cloudwego/eino的仓库地址，然后告诉我仓库的地址",
 		},
 	})
 	if err != nil {
-		log.Printf("agent.Stream failed, err=%v", err)
-		return
+		log.Fatalf("生成响应失败: %v", err)
 	}
-
-	// 流式输出结果
-	log.Printf("开始流式输出:\n")
-	for {
-		chunk, err := stream.Recv()
-		if err != nil {
-			if err.Error() == "EOF" {
-				log.Printf("\n流式输出完成")
-				break
-			}
-			log.Printf("stream.Recv failed, err=%v", err)
-			return
-		}
-		
-		// 实时输出每个消息块
-		for _, msg := range chunk {
-			if msg.Content != "" {
-				log.Printf("%s", msg.Content)
-			}
-		}
-	}
+	fmt.Println(resp.Content)
 }
